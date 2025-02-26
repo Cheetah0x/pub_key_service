@@ -9,8 +9,8 @@ import {
 import RegistryStore from "../utils/registryStore";
 
 export class EmailRegistryService {
+  public contract: EmailRegistryContract | null = null;
   private pxe: PXE | null = null;
-  private contract: EmailRegistryContract | null = null;
 
   async initialize() {
     if (!this.pxe) {
@@ -58,39 +58,72 @@ export class EmailRegistryService {
     return await contract.send(paymentOptions).deployed();
   }
 
-  private async updateContractPublicKeys(contract: EmailRegistryContract) {
+  public async updateContractJWK_ID(contract: EmailRegistryContract) {
     if (!this.pxe) throw new Error("PXE not initialized");
     if (!contract) throw new Error("Registry address is required");
 
     const account = await this.getObsidionAccount();
-    const { hashFields } = await fetchGooglePublicKeys();
+    const hashFields = await fetchGooglePublicKeys();
 
-    const contractGooglePublicKeys = await contract
-      .withWallet(account)
-      .methods.get_google_public_key_hashs()
-      .simulate();
-
-    if (
-      JSON.stringify(contractGooglePublicKeys) !== JSON.stringify(hashFields)
-    ) {
-      await contract
+    // Check each hash and add if not already whitelisted
+    for (const hash of hashFields) {
+      const isValid = await contract
         .withWallet(account)
-        .methods.update_google_public_key_hashs({ hash: hashFields })
-        .send();
+        .methods.is_valid_jwk(hash)
+        .simulate();
+
+      if (!isValid) {
+        await contract.withWallet(account).methods.add_jwk(hash).send();
+        // Store the new JWK ID
+        RegistryStore.addJwkId(hash.toString());
+      }
     }
+
+    // After adding new keys, check and remove old ones
+    await this.removeOldJWK_ID(contract);
+  }
+
+  private async removeOldJWK_ID(contract: EmailRegistryContract) {
+    if (!this.pxe) throw new Error("PXE not initialized");
+    if (!contract) throw new Error("Registry address is required");
+
+    const account = await this.getObsidionAccount();
+    const currentGoogleKeys = await fetchGooglePublicKeys();
+    const storedJwkIds = RegistryStore.getJwkIds();
+
+    // Convert current Google keys to strings for comparison
+    const currentKeyStrings = currentGoogleKeys.map(
+      (key) => `0x${key.toString()}`
+    );
+
+    // Check each stored JWK ID and remove only the outdated ones
+    for (const storedJwkId of storedJwkIds) {
+      if (!currentKeyStrings.includes(storedJwkId)) {
+        const isStillValid = await contract
+          .withWallet(account)
+          .methods.is_valid_jwk(Fr.fromString(storedJwkId))
+          .simulate();
+
+        if (isStillValid) {
+          await contract
+            .withWallet(account)
+            .methods.remove_jwk(Fr.fromString(storedJwkId))
+            .send();
+          RegistryStore.removeJwkId(storedJwkId); // Remove only this specific JWK ID
+        }
+      }
+    }
+
+    // Add any new keys that aren't already stored
+    currentKeyStrings.forEach((key) => {
+      if (!storedJwkIds.includes(key as `0x${string}`)) {
+        RegistryStore.addJwkId(key as `0x${string}`);
+      }
+    });
   }
 
   private async getObsidionAccount() {
     if (!this.pxe) throw new Error("PXE not initialized");
     return await getTestAccount(this.pxe);
-  }
-
-  async updateGoogleKeys() {
-    if (!this.pxe || !this.contract) {
-      throw new Error("Service not properly initialized");
-    }
-
-    await this.updateContractPublicKeys(this.contract);
-    return this.contract.address.toString();
   }
 }

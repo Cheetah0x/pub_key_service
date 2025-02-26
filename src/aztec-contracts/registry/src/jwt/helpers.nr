@@ -5,38 +5,7 @@ use std::hash::poseidon2;
 global SCHEDULED_DELAY_CHANGE: u32 = 3;
 global GOOGLE_PUBLIC_KEY_LIMBS_LEN: u32 = 36;
 global EMAIL_LEN: u32 = 64;
-
-#[derive(Serialize, Deserialize, Packable)]
-pub struct GooglePublicKeyHashs {
-    hash: [Field; 2],
-}
-
-impl ToField for GooglePublicKeyHashs {
-    fn to_field(self) -> Field {
-        // Hash both fields together to create a single field
-        poseidon2::Poseidon2::hash(self.hash, 2)
-    }
-}
-
-impl FromField for GooglePublicKeyHashs {
-    fn from_field(value: Field) -> Self {
-        // Since we can't reconstruct two unique fields from one,
-        // we'll use the same value for both hashes
-        GooglePublicKeyHashs { hash: [value, value] }
-    }
-}
-
-impl Eq for GooglePublicKeyHashs {
-    fn eq(self, other: Self) -> bool {
-        let first_equal = self.hash[0] == other.hash[0];
-        let second_equal = self.hash[1] == other.hash[1];
-        if first_equal {
-            second_equal
-        } else {
-            false
-        }
-    }
-}
+global E_LEN: u32 = 1;
 
 pub fn bytes_to_fields<let N: u32>(bytes: [u8; N]) -> [Field; N] {
     let mut fields = [0 as Field; N];
@@ -46,23 +15,22 @@ pub fn bytes_to_fields<let N: u32>(bytes: [u8; N]) -> [Field; N] {
     fields
 }
 
-pub fn verifyGooglePublicKey(
-    location: SharedMutable<GooglePublicKeyHashs, SCHEDULED_DELAY_CHANGE, &mut PrivateContext>,
+pub fn verifyPublicKey(
+    location: SharedMutable<bool, SCHEDULED_DELAY_CHANGE, &mut PrivateContext>,
+    jwt_id: Field,
     public_key_limbs: [Field; 18],
     public_key_redc_limbs: [Field; 18],
+    public_key_e: Field,
 ) {
-    let google_public_key_hashs = location.get_current_value();
+    let jwt_id_valid = location.get_current_value();
+    assert(jwt_id_valid, "google public key hash not found");
 
-    let limbs = public_key_limbs.concat(public_key_redc_limbs);
-    let hash = poseidon2::Poseidon2::hash(limbs, GOOGLE_PUBLIC_KEY_LIMBS_LEN);
+    let public_key_limbs = public_key_limbs.concat(public_key_redc_limbs);
+    let public_key_limbs_and_e = public_key_limbs.concat([public_key_e]);
+    let hash =
+        poseidon2::Poseidon2::hash(public_key_limbs_and_e, (GOOGLE_PUBLIC_KEY_LIMBS_LEN + E_LEN));
 
-    let matches_first = hash == google_public_key_hashs.hash[0];
-    let matches_second = hash == google_public_key_hashs.hash[1];
-
-    assert(
-        matches_first | matches_second,
-        "public key hash does not match either of the stored hashes",
-    );
+    assert(hash == jwt_id, "public key hash does not match the stored hash");
 }
 
 pub fn emailHashFromBytes(email_bytes: [u8; EMAIL_LEN]) -> Field {

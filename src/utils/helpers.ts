@@ -12,6 +12,7 @@ import { getDeployedTestAccountsWallets } from "@aztec/accounts/testing";
 import dotenv from "dotenv";
 import { GasSettings } from "@aztec/circuits.js";
 import { PublicKeyRegistry } from "./PublicKeyRegistry";
+import { Base64 } from "ox";
 
 dotenv.config();
 
@@ -66,12 +67,7 @@ export const getDefaultFeeOptions = async (
   };
 };
 
-export interface GooglePublicKey {
-  hashFields: Fr[];
-  kids: string[];
-}
-
-export async function fetchGooglePublicKeys(): Promise<GooglePublicKey> {
+export async function fetchGooglePublicKeys(): Promise<Fr[]> {
   const publicKeyRegistry = new PublicKeyRegistry();
   const response = await fetch("https://www.googleapis.com/oauth2/v3/certs");
   const { keys } = await response.json();
@@ -79,18 +75,19 @@ export async function fetchGooglePublicKeys(): Promise<GooglePublicKey> {
   const firstkey = keys[0];
   const secondkey = keys[1];
 
-  const firstPublicKey = await publicKeyRegistry.getPublicKeyByKid(
-    firstkey.kid
+  const first_jwk_id = await publicKeyRegistry.deriveJwkId(
+    Base64.toBytes(firstkey.n),
+    Base64.toBytes(firstkey.e)
   );
-  const secondPublicKey = await publicKeyRegistry.getPublicKeyByKid(
-    secondkey.kid
+  const second_jwk_id = await publicKeyRegistry.deriveJwkId(
+    Base64.toBytes(secondkey.n),
+    Base64.toBytes(secondkey.e)
   );
 
-  return {
-    hashFields: [
-      Fr.fromString(firstPublicKey.hash),
-      Fr.fromString(secondPublicKey.hash),
-    ],
-    kids: [firstkey.kid, secondkey.kid],
-  };
+  const hashFields = [
+    Fr.fromString(first_jwk_id),
+    Fr.fromString(second_jwk_id),
+  ];
+
+  return hashFields;
 }

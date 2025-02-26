@@ -13,7 +13,7 @@ use dep::aztec::macros::aztec;
 #[aztec]
 contract EmailRegistry {
     use crate::jwt::helpers::{
-        bytes_to_fields, emailHashFromBytes, GooglePublicKeyHashs, verifyGooglePublicKey,
+        bytes_to_fields, emailHashFromBytes, verifyPublicKey,
     };
     use crate::jwt::verifyJwt::{JWTInput, verify_jwt};
     use dep::aztec::{
@@ -40,27 +40,39 @@ contract EmailRegistry {
 
     #[storage]
     struct Storage<Context> {
-        admin: PublicImmutable<AztecAddress, Context>,
+        admin: PublicMutable<AztecAddress, Context>, //for futureproofing
         emails: Map<Field, PublicMutable<AztecAddress, Context>, Context>,
-        google_public_key_hashs: SharedMutable<GooglePublicKeyHashs, SCHEDULED_DELAY_CHANGE, Context>,
+        jwks_allowlist: Map<Field, SharedMutable<bool, SCHEDULED_DELAY_CHANGE, Context>, Context>,
     }
 
     #[public]
     #[initializer]
     fn constructor(admin: AztecAddress) {
-        storage.admin.initialize(admin);
+        storage.admin.write(admin);
     }
 
     #[public]
-    fn update_google_public_key_hashs(google_public_key_hashs: GooglePublicKeyHashs) {
+    fn add_jwk(jwt_id: Field) {
         let admin = storage.admin.read();
         assert(context.msg_sender() == admin, "only admin can update the google public key hash");
-        debug_log_format(
-            "updating google public key hash {}",
-            [google_public_key_hashs.to_field()],
-        );
 
-        storage.google_public_key_hashs.schedule_value_change(google_public_key_hashs);
+        debug_log_format("updating google public key hash {}", [jwt_id]);
+
+        storage.jwks_allowlist.at(jwt_id).schedule_value_change(true);
+    }
+
+    #[public]
+    fn remove_jwk(jwt_id: Field) {
+        let admin = storage.admin.read();
+        assert(context.msg_sender() == admin, "only admin can update the google public key hash");
+
+        storage.jwks_allowlist.at(jwt_id).schedule_value_change(false);
+    }
+
+    #[view]
+    #[public]
+    fn is_valid_jwk(jwt_id: Field) -> bool {
+        storage.jwks_allowlist.at(jwt_id).get_current_value()
     }
 
     #[private]
@@ -69,8 +81,14 @@ contract EmailRegistry {
         assert(address != ZERO_ADDRESS, "cannot be zero address");
 
         //get the google public key hash from storage
-        let location = storage.google_public_key_hashs;
-        verifyGooglePublicKey(location, jwt.public_key_limbs, jwt.public_key_redc_limbs);
+        let location = storage.jwks_allowlist.at(jwt.jwt_id);
+        verifyPublicKey(
+            location,
+            jwt.jwt_id,
+            jwt.public_key_limbs,
+            jwt.public_key_redc_limbs,
+            jwt.public_key_e,
+        );
 
         verify_jwt(jwt);
 
@@ -105,8 +123,8 @@ contract EmailRegistry {
         assert(address != ZERO_ADDRESS, "cannot be zero address");
 
         //verify the new email
-        let location = storage.google_public_key_hashs;
-        verifyGooglePublicKey(location, jwt.public_key_limbs, jwt.public_key_redc_limbs);
+        let location = storage.jwks_allowlist.at(jwt.jwt_id);
+        verifyPublicKey(location, jwt.jwt_id, jwt.public_key_limbs, jwt.public_key_redc_limbs, jwt.public_key_e);
 
         verify_jwt(jwt);
 
@@ -165,9 +183,5 @@ contract EmailRegistry {
         address
     }
 
-    #[view]
-    #[public]
-    fn get_google_public_key_hashs() -> GooglePublicKeyHashs {
-        storage.google_public_key_hashs.get_current_value()
-    }
+    
 }

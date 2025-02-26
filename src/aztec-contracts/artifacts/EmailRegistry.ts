@@ -40,6 +40,7 @@ export const EmailRegistryContractArtifact = loadContractArtifact(
 );
 
 /**
+/**
  * Type-safe interface for contract EmailRegistry;
  */
 export class EmailRegistryContract extends ContractBase {
@@ -118,19 +119,19 @@ export class EmailRegistryContract extends ContractBase {
   }
 
   public static get storage(): ContractStorageLayout<
-    "admin" | "emails" | "google_public_key_hashs"
+    "admin" | "emails" | "jwks_allowlist"
   > {
     return {
       admin: {
         slot: new Fr(1n),
       },
       emails: {
+        slot: new Fr(2n),
+      },
+      jwks_allowlist: {
         slot: new Fr(3n),
       },
-      google_public_key_hashs: {
-        slot: new Fr(4n),
-      },
-    } as ContractStorageLayout<"admin" | "emails" | "google_public_key_hashs">;
+    } as ContractStorageLayout<"admin" | "emails" | "jwks_allowlist">;
   }
 
   /** Type-safe wrappers for the public methods exposed by the contract. */
@@ -144,12 +145,17 @@ export class EmailRegistryContract extends ContractBase {
       payload_json: (bigint | number)[];
       signature_limbs: FieldLike[];
       jwt_iat: bigint | number;
-      public_key_hash: FieldLike;
+      public_key_e: FieldLike;
       public_key_limbs: FieldLike[];
       public_key_redc_limbs: FieldLike[];
+      jwt_id: FieldLike;
       jwt_nonce: (bigint | number)[];
       email_bytes: (bigint | number)[];
     }) => ContractFunctionInteraction) &
+      Pick<ContractMethod, "selector">;
+
+    /** add_jwk(jwt_id: field) */
+    add_jwk: ((jwt_id: FieldLike) => ContractFunctionInteraction) &
       Pick<ContractMethod, "selector">;
 
     /** change_email(old_email_hash: field, jwt: struct) */
@@ -163,9 +169,10 @@ export class EmailRegistryContract extends ContractBase {
         payload_json: (bigint | number)[];
         signature_limbs: FieldLike[];
         jwt_iat: bigint | number;
-        public_key_hash: FieldLike;
+        public_key_e: FieldLike;
         public_key_limbs: FieldLike[];
         public_key_redc_limbs: FieldLike[];
+        jwt_id: FieldLike;
         jwt_nonce: (bigint | number)[];
         email_bytes: (bigint | number)[];
       }
@@ -193,8 +200,8 @@ export class EmailRegistryContract extends ContractBase {
     ) => ContractFunctionInteraction) &
       Pick<ContractMethod, "selector">;
 
-    /** get_google_public_key_hashs() */
-    get_google_public_key_hashs: (() => ContractFunctionInteraction) &
+    /** is_valid_jwk(jwt_id: field) */
+    is_valid_jwk: ((jwt_id: FieldLike) => ContractFunctionInteraction) &
       Pick<ContractMethod, "selector">;
 
     /** process_log(log_plaintext: struct, tx_hash: field, unique_note_hashes_in_tx: struct, first_nullifier_in_tx: field, recipient: struct) */
@@ -215,14 +222,12 @@ export class EmailRegistryContract extends ContractBase {
     remove_email: ((email_hash: FieldLike) => ContractFunctionInteraction) &
       Pick<ContractMethod, "selector">;
 
-    /** sync_notes() */
-    sync_notes: (() => ContractFunctionInteraction) &
+    /** remove_jwk(jwt_id: field) */
+    remove_jwk: ((jwt_id: FieldLike) => ContractFunctionInteraction) &
       Pick<ContractMethod, "selector">;
 
-    /** update_google_public_key_hashs(google_public_key_hashs: struct) */
-    update_google_public_key_hashs: ((google_public_key_hashs: {
-      hash: FieldLike[];
-    }) => ContractFunctionInteraction) &
+    /** sync_notes() */
+    sync_notes: (() => ContractFunctionInteraction) &
       Pick<ContractMethod, "selector">;
   };
 }

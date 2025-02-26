@@ -4,7 +4,6 @@ import { Base64, Bytes } from "ox";
 import { assert } from "ts-essentials";
 import { z } from "zod";
 
-export const HOSTED_SERVICE_URL = "https://zklogin.shield-labs.xyz";
 const JWT_NONCE_LEN = 64;
 
 export function decodeJwt(jwt: string) {

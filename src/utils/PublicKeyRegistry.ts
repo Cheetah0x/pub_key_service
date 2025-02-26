@@ -3,52 +3,81 @@ import {
   bnToRedcLimbStrArray,
 } from "@mach-34/noir-bignum-paramgen";
 import { utils } from "@shield-labs/utils";
-import { decodeJwt, HOSTED_SERVICE_URL } from "./registryUtils.js";
+import { decodeJwt } from "./registryUtils.js";
 import ky from "ky";
 import { Base64, Bytes, Hash, Hex } from "ox";
 import { z } from "zod";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 
+// Define JWT header type
+type JWTHeader = {
+  kid: string;
+  n: string;
+  e: string;
+};
+
+export type PublicKey = {
+  kid: string;
+  n: string;
+  e: string;
+  limbs: {
+    public_key_limbs: string[];
+    public_key_redc_limbs: string[];
+  };
+  hash: `0x${string}`;
+  jwk_id?: `0x${string}`;
+};
+
 export class PublicKeyRegistry {
-  constructor(private apiUrl = HOSTED_SERVICE_URL) {}
-
-  // TODO: more specific chainId type
-  async requestPublicKeysUpdate(chainId: number) {
-    const { hash } = await ky
-      .post(utils.joinUrl(this.apiUrl, "/api/register-public-keys"), {
-        json: {
-          chainId,
-        },
-      })
-      .json<{ hash: Hex.Hex | null }>();
-
-    if (!hash) {
-      return;
-    }
-
-    return hash;
-
-    // TODO: wait for transaction
-    // await provider.waitForTransaction(hash);
-  }
+  constructor() {}
 
   async getPublicKeyByJwt(jwt: string) {
-    const decoded = decodeJwt(jwt);
+    const decoded = decodeJwt(jwt) as { header: { kid: string } };
     const publicKeys = await this.getPublicKeys();
+    // First find the key by kid
     const key = publicKeys.find((key) => key.kid === decoded.header.kid);
     if (!key) {
       throw new Error("Public key not found for jwt");
     }
+    // Then derive the jwk_id from the key's n and e
+    const jwk_id = await this.deriveJwkId(
+      Base64.toBytes(key.n),
+      Base64.toBytes(key.e)
+    );
+    // Update the key with its jwk_id
+    return {
+      ...key,
+      jwk_id,
+    };
+  }
+
+  async getPublicKeyByJwkId(jwk_id: string) {
+    const keys = await this.getPublicKeys();
+    console.log("keys", keys);
+    const key = keys.find((key) => key.jwk_id === jwk_id);
+    if (!key) {
+      throw new Error(`Public key not found for jwk_id ${jwk_id}`);
+    }
     return key;
   }
 
-  async getPublicKeyByKid(kid: string) {
-    const keys = await this.getPublicKeys();
-    const key = keys.find((key) => key.kid === kid);
-    if (!key) {
-      throw new Error(`Public key not found for kid ${kid}`);
-    }
-    return key;
+  async deriveJwkId(n: Uint8Array, e: Uint8Array): Promise<string> {
+    const publicKey = Bytes.toBigInt(n);
+    const eBigInt = Bytes.toBigInt(e);
+    const limbs = {
+      public_key_limbs: bnToLimbStrArray(publicKey),
+      public_key_redc_limbs: bnToRedcLimbStrArray(publicKey),
+    };
+
+    // Convert all limbs to bigints and concatenate with e
+    const allLimbs: bigint[] = [
+      ...limbs.public_key_limbs.map((x) => BigInt(x)),
+      ...limbs.public_key_redc_limbs.map((x) => BigInt(x)),
+      eBigInt,
+    ];
+
+    const hash = await poseidon2Hash(allLimbs);
+    return ("0x" + hash.toString(16).padStart(64, "0")) as `0x${string}`;
   }
 
   async getPublicKeys() {
@@ -56,17 +85,41 @@ export class PublicKeyRegistry {
     const keys = await Promise.all(
       urls.map(async (url) => this.#getPublicKeysByUrl(url))
     );
+    console.log("keys", keys);
     return keys.flat();
   }
 
-  async #getPublicKeysByUrl(url: string) {
-    const authProviderId = Bytes.toHex(Hash.keccak256(Bytes.fromString(url)));
+  async getPublicKeyHash(
+    publicKey: {
+      public_key_limbs: string[];
+      public_key_redc_limbs: string[];
+    },
+    e: string
+  ): Promise<`0x${string}`> {
+    // Convert all limbs to bigints
+    const allLimbs: bigint[] = [
+      ...publicKey.public_key_limbs.map((x) => BigInt(x)),
+      ...publicKey.public_key_redc_limbs.map((x) => BigInt(x)),
+      Bytes.toBigInt(Base64.toBytes(e)),
+    ];
+
+    const hash = await poseidon2Hash(allLimbs);
+    const hexString = ("0x" +
+      hash.toString(16).padStart(64, "0")) as `0x${string}`;
+
+    console.log("Resulting hash:", hexString);
+
+    return hexString;
+  }
+
+  async #getPublicKeysByUrl(url: string): Promise<PublicKey[]> {
     const res = z
       .object({
         keys: z.array(
           z.object({
             kid: z.string(),
             n: z.string(),
+            e: z.string(),
           })
         ),
       })
@@ -78,30 +131,39 @@ export class PublicKeyRegistry {
         public_key_redc_limbs: bnToRedcLimbStrArray(publicKey),
       };
       return {
-        authProviderId,
         kid: key.kid,
+        n: key.n,
+        e: key.e,
         limbs,
-        hash: await getPublicKeyHash(limbs),
-      };
+        hash: await this.getPublicKeyHash(limbs, key.e),
+      } as PublicKey;
     });
     return await Promise.all(keys);
   }
-}
 
-export async function getPublicKeyHash(publicKey: {
-  public_key_limbs: string[];
-  public_key_redc_limbs: string[];
-}): Promise<`0x${string}`> {
-  const limbs: bigint[] = [
-    ...publicKey.public_key_limbs,
-    ...publicKey.public_key_redc_limbs,
-  ].map((x) => BigInt(x));
+  async processGoogleKey(key: {
+    kid: string;
+    n: string;
+    e: string;
+  }): Promise<PublicKey> {
+    const nBytes = Base64.toBytes(key.n);
+    const eBytes = Base64.toBytes(key.e);
+    const nBigInt = Bytes.toBigInt(nBytes);
 
-  const hash = await poseidon2Hash(limbs);
-  const hexString = ("0x" +
-    hash.toString(16).padStart(64, "0")) as `0x${string}`;
+    const limbs = {
+      public_key_limbs: bnToLimbStrArray(nBigInt),
+      public_key_redc_limbs: bnToRedcLimbStrArray(nBigInt),
+    };
 
-  console.log("Resulting hash:", hexString);
+    const jwk_id = (await this.deriveJwkId(nBytes, eBytes)) as `0x${string}`;
 
-  return hexString;
+    return {
+      kid: key.kid,
+      n: key.n,
+      e: key.e,
+      limbs,
+      hash: await this.getPublicKeyHash(limbs, key.e),
+      jwk_id,
+    };
+  }
 }

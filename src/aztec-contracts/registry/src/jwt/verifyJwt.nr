@@ -14,9 +14,10 @@ pub struct JWTInput {
     payload_json: [u8; JWT_PAYLOAD_JSON_MAX_LEN], // TODO: get payload_json from header_and_payload
     signature_limbs: [Field; 18],
     jwt_iat: u64,
-    public_key_hash: Field,
+    public_key_e: Field,
     public_key_limbs: [Field; 18],
     public_key_redc_limbs: [Field; 18],
+    jwt_id: Field,
     jwt_nonce: [u8; JWT_NONCE_LEN],
     email_bytes: [u8; EMAIL_LEN],
 }
